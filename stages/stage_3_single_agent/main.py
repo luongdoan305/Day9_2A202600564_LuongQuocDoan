@@ -28,58 +28,50 @@ LEGAL_KNOWLEDGE = [
         "keywords": ["nda", "non-disclosure", "confidential", "trade secret", "breach"],
         "text": (
             "NDA breaches trigger contractual and statutory liability. Under the DTSA "
-            "(18 U.S.C. § 1836): injunctive relief, actual damages + unjust enrichment, "
+            "(18 U.S.C. Section 1836): injunctive relief, actual damages plus unjust enrichment, "
             "exemplary damages up to 2x for willful misappropriation, and attorney's fees. "
-            "Criminal prosecution possible under Economic Espionage Act (18 U.S.C. § 1832)."
+            "Criminal prosecution is possible under the Economic Espionage Act."
         ),
     },
     {
         "id": "contract_remedies",
         "keywords": ["breach", "contract", "remedies", "damages", "ucc"],
         "text": (
-            "UCC Article 2 remedies: expectation damages, consequential damages (Hadley v. "
-            "Baxendale), specific performance for unique goods, cover damages. Statute of "
-            "limitations: 4 years (UCC § 2-725)."
+            "UCC Article 2 remedies include expectation damages, consequential damages, "
+            "specific performance for unique goods, and cover damages. The statute of "
+            "limitations is typically 4 years under UCC Section 2-725."
         ),
     },
     {
         "id": "tax_evasion",
         "keywords": ["tax", "evasion", "irs", "penalty", "fraud", "revenue"],
         "text": (
-            "Tax evasion (26 U.S.C. § 7201): felony with up to $250K fine and 5 years prison. "
-            "Civil fraud penalty: 75% of underpayment (IRC § 6663). Failure to file: up to "
-            "$25K fine and 1 year prison. IRS can assess back taxes + interest going back 6 years "
-            "(unlimited for fraud). Officers may be personally liable as 'responsible persons'."
+            "Tax evasion can carry criminal penalties, civil fraud penalties, back taxes, "
+            "interest, and possible personal liability for responsible officers."
         ),
     },
     {
         "id": "offshore_tax",
         "keywords": ["offshore", "overseas", "foreign", "tax", "fbar", "fatca"],
         "text": (
-            "Unreported overseas income: FBAR penalties up to $100K or 50% of account balance "
-            "per violation. FATCA non-compliance: 30% withholding on US-source payments. "
-            "Willful violations may trigger criminal prosecution. Voluntary Disclosure Program "
-            "may reduce penalties."
+            "Unreported overseas income may trigger FBAR penalties, FATCA consequences, "
+            "back taxes, interest, and possible criminal enforcement for willful violations."
         ),
     },
     {
         "id": "data_privacy",
         "keywords": ["data", "privacy", "user", "consent", "gdpr", "ccpa", "sharing"],
         "text": (
-            "Sharing user data without consent violates: CCPA (fines up to $7,500 per intentional "
-            "violation), GDPR (fines up to 4% of global revenue or EUR 20M), FTC Act Section 5 "
-            "(unfair/deceptive practices). Class action lawsuits under state privacy laws. "
-            "Individual right of action under CCPA for data breaches ($100-$750 per consumer)."
+            "Sharing user data without consent may violate CCPA, GDPR, FTC Act Section 5, "
+            "state privacy laws, and consumer protection rules."
         ),
     },
     {
         "id": "sox_compliance",
         "keywords": ["sox", "sarbanes", "compliance", "sec", "financial", "reporting"],
         "text": (
-            "SOX violations: CEO/CFO certification of false financials — up to $5M fine and "
-            "20 years prison (§ 906). Destruction of records — up to 20 years (§ 802). "
-            "Whistleblower retaliation — up to 10 years (§ 1107). SEC can bar individuals "
-            "from serving as officers or directors."
+            "SOX violations can create SEC enforcement risk, officer/director bars, criminal "
+            "exposure for false certifications, and penalties for record destruction."
         ),
     },
 ]
@@ -91,7 +83,7 @@ LEGAL_KNOWLEDGE = [
 
 @tool
 def search_legal_database(query: str) -> str:
-    """Search the legal knowledge base for relevant statutes, case law, and legal principles.
+    """Search the legal knowledge base for relevant statutes and legal principles.
 
     Args:
         query: Natural language search query about a legal topic.
@@ -102,32 +94,32 @@ def search_legal_database(query: str) -> str:
         overlap = len(query_words & set(entry["keywords"]))
         if overlap > 0:
             scored.append((overlap, entry))
+
     scored.sort(key=lambda x: x[0], reverse=True)
     top = scored[:2]
     if not top:
         return "No relevant legal sources found."
-    return "\n\n".join(f"[{e['id']}] {e['text']}" for _, e in top)
+    return "\n\n".join(f"[{entry['id']}] {entry['text']}" for _, entry in top)
 
 
 @tool
 def calculate_penalty(violation_type: str, severity: str, annual_revenue: float) -> str:
-    """Calculate estimated legal penalties based on violation type, severity, and company revenue.
+    """Calculate estimated legal penalties based on violation type, severity, and revenue.
 
     Args:
-        violation_type: Type of violation (e.g., 'tax_evasion', 'data_privacy', 'contract_breach').
-        severity: Severity level ('low', 'medium', 'high').
+        violation_type: Type of violation, such as tax_evasion, data_privacy, or contract_breach.
+        severity: Severity level: low, medium, or high.
         annual_revenue: Company's annual revenue in USD.
     """
     severity_multipliers = {"low": 0.01, "medium": 0.05, "high": 0.10}
     multiplier = severity_multipliers.get(severity.lower(), 0.05)
-
     base_penalty = annual_revenue * multiplier
 
     type_lower = violation_type.lower()
     if "tax" in type_lower:
-        extra = "Plus potential criminal charges (up to 5 years) and 75% civil fraud penalty."
+        extra = "Plus potential criminal charges and civil fraud penalties."
     elif "privacy" in type_lower or "data" in type_lower:
-        extra = "Plus GDPR fines up to 4% of global revenue and class action exposure."
+        extra = "Plus privacy regulator fines and class action exposure."
     elif "contract" in type_lower:
         extra = "Plus consequential damages, attorney's fees, and possible injunction."
     else:
@@ -146,23 +138,22 @@ def check_compliance_requirements(industry: str, company_size: str) -> str:
     """Check which regulatory compliance frameworks apply to a company.
 
     Args:
-        industry: The company's industry (e.g., 'technology', 'finance', 'healthcare').
-        company_size: Company size ('startup', 'mid-size', 'enterprise').
+        industry: The company's industry, such as technology, finance, or healthcare.
+        company_size: Company size: startup, mid-size, or enterprise.
     """
     frameworks = {
-        "technology": ["CCPA/CPRA", "GDPR (if EU users)", "FTC Act Section 5", "SOC 2"],
+        "technology": ["CCPA/CPRA", "GDPR if EU users", "FTC Act Section 5", "SOC 2"],
         "finance": ["SOX", "BSA/AML", "Dodd-Frank", "SEC Regulations", "FCPA"],
         "healthcare": ["HIPAA", "HITECH Act", "FTC Health Breach Notification", "AKS"],
     }
 
     size_extras = {
-        "startup": "Consider: SOC 2 Type II for investor confidence.",
-        "mid-size": "Consider: dedicated compliance officer and annual audits.",
-        "enterprise": "Required: full compliance program, board oversight, whistleblower hotline.",
+        "startup": "Consider SOC 2 Type II for investor and customer confidence.",
+        "mid-size": "Consider a dedicated compliance officer and annual audits.",
+        "enterprise": "Use a full compliance program, board oversight, and whistleblower hotline.",
     }
 
-    industry_lower = industry.lower()
-    applicable = frameworks.get(industry_lower, ["FTC Act Section 5", "State consumer protection laws"])
+    applicable = frameworks.get(industry.lower(), ["FTC Act Section 5", "State consumer protection laws"])
     size_note = size_extras.get(company_size.lower(), "")
 
     return (
@@ -172,18 +163,45 @@ def check_compliance_requirements(industry: str, company_size: str) -> str:
     )
 
 
-TOOLS = [search_legal_database, calculate_penalty, check_compliance_requirements]
+@tool
+def search_case_law(keywords: str) -> str:
+    """Search case law by keyword.
+
+    Args:
+        keywords: Keywords to search for, such as breach, negligence, or contract.
+    """
+    cases = {
+        "breach": "Hadley v. Baxendale (1854) - Consequential damages for breach of contract.",
+        "negligence": "Donoghue v. Stevenson (1932) - Duty of care.",
+        "contract": "Carlill v. Carbolic Smoke Ball Co (1893) - Unilateral contract.",
+    }
+
+    keywords_lower = keywords.lower()
+    for key, case in cases.items():
+        if key in keywords_lower:
+            return case
+    return "No matching case law found."
+
+
+TOOLS = [
+    search_legal_database,
+    calculate_penalty,
+    check_compliance_requirements,
+    search_case_law,
+]
 
 QUESTION = (
-    "A tech startup with $5M revenue was caught sharing user data without consent "
-    "and failed to pay taxes on overseas revenue. What are all the legal consequences?"
+    "A tech startup with $5M annual revenue had a vendor breach a software contract, "
+    "causing consequential losses. What remedies, case law, penalty exposure, and "
+    "compliance requirements should the company consider?"
 )
 
 SYSTEM_PROMPT = (
     "You are a legal analyst agent. You have access to tools for searching legal databases, "
-    "calculating penalties, and checking compliance requirements. Use these tools to build "
-    "a comprehensive analysis. Search for each legal area separately — data privacy, tax, "
-    "and compliance. Keep your final answer under 500 words."
+    "searching case law, calculating penalties, and checking compliance requirements. Use "
+    "these tools to build a comprehensive analysis. For breach-of-contract questions, search "
+    "both the legal database and case law before estimating exposure. Keep your final answer "
+    "under 500 words."
 )
 
 
@@ -205,7 +223,7 @@ async def main():
     print("-" * 70)
 
     llm = get_llm()
-    graph = create_react_agent(model=llm, tools=TOOLS, prompt=SYSTEM_PROMPT)
+    graph = create_react_agent(model=llm, tools=TOOLS, prompt=SYSTEM_PROMPT, debug=True)
 
     inputs = {"messages": [{"role": "user", "content": QUESTION}]}
 

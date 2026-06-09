@@ -1,24 +1,33 @@
 """Stage 4: Multi-Agent System (In-Process)
 
 Multiple specialised agents collaborate on a complex legal question.
-This mirrors Stage 5's architecture (law_agent/graph.py) but runs
-entirely in-process — no HTTP, no A2A protocol, no separate servers.
+This mirrors Stage 5's architecture, but runs entirely in-process:
+no HTTP, no A2A protocol, and no separate servers.
 
-Graph: analyze_law -> check_routing -> parallel [call_tax, call_compliance] -> aggregate -> END
+Graph:
+    analyze_law
+      -> check_routing
+      -> parallel [call_tax_specialist, call_compliance_specialist, call_privacy_specialist]
+      -> aggregate
+      -> END
 """
 
 import asyncio
 import json
 import os
 import sys
+from typing import Annotated, TypedDict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
+from langgraph.constants import Send
+from langgraph.graph import END, StateGraph
 
 from common.llm import get_llm
+
 
 # ---------------------------------------------------------------------------
 # Tools for specialist sub-agents
@@ -34,28 +43,22 @@ def search_tax_law(query: str) -> str:
     knowledge = [
         (
             ["tax", "evasion", "fraud", "irs"],
-            "Tax evasion (26 U.S.C. § 7201): felony, up to $250K fine and 5 years prison. "
-            "Civil fraud penalty: 75% of underpayment (IRC § 6663). Failure to file: up to "
-            "$25K fine and 1 year prison.",
+            "Tax evasion: felony exposure, fines, possible prison time, civil fraud penalties, "
+            "back taxes, interest, and responsible-person liability for officers.",
         ),
         (
             ["offshore", "overseas", "foreign", "fbar", "fatca"],
-            "FBAR penalties: up to $100K or 50% of account balance per violation. "
-            "FATCA non-compliance: 30% withholding on US-source payments. "
-            "Willful violations may trigger criminal prosecution.",
+            "Unreported overseas accounts or income can trigger FBAR/FATCA penalties, "
+            "withholding consequences, back taxes, interest, and criminal risk for willful conduct.",
         ),
         (
             ["transfer", "pricing", "corporate"],
-            "Transfer pricing violations (IRC § 482): IRS can reallocate income between "
-            "related entities. Penalties: 20-40% of underpayment for substantial/gross "
-            "valuation misstatements.",
+            "Transfer pricing violations can let the IRS reallocate income between related "
+            "entities and impose substantial valuation misstatement penalties.",
         ),
     ]
     query_lower = query.lower()
-    results = []
-    for keywords, text in knowledge:
-        if any(kw in query_lower for kw in keywords):
-            results.append(text)
+    results = [text for keywords, text in knowledge if any(kw in query_lower for kw in keywords)]
     return "\n\n".join(results) if results else "No specific tax law matches found."
 
 
@@ -68,41 +71,61 @@ def search_compliance_law(query: str) -> str:
     """
     knowledge = [
         (
-            ["data", "privacy", "gdpr", "ccpa", "consent", "user"],
-            "CCPA: fines up to $7,500 per intentional violation. GDPR: up to 4% of global "
-            "revenue or EUR 20M. FTC Act Section 5 for unfair/deceptive practices. "
-            "Class action exposure under state privacy laws ($100-$750 per consumer).",
-        ),
-        (
             ["sox", "sarbanes", "financial", "sec", "reporting"],
-            "SOX § 906: false certification — up to $5M fine, 20 years prison. "
-            "§ 802: record destruction — up to 20 years. § 1107: whistleblower "
-            "retaliation — up to 10 years. SEC officer/director bars.",
+            "SOX issues can create SEC enforcement risk, false-certification penalties, "
+            "record-retention obligations, officer/director bars, and whistleblower risks.",
         ),
         (
             ["fcpa", "bribery", "corruption", "foreign"],
-            "FCPA anti-bribery: up to $250K fine per violation (individuals), "
-            "$2M (corporations). Criminal penalties: up to 5 years prison. "
-            "Books and records provisions apply to all SEC-reporting companies.",
+            "FCPA anti-bribery and books-and-records rules can create corporate fines, "
+            "individual liability, monitorship risk, and SEC/DOJ enforcement.",
+        ),
+        (
+            ["aml", "bsa", "sanctions", "regulation", "compliance"],
+            "AML/BSA and sanctions compliance require risk controls, monitoring, reporting, "
+            "recordkeeping, and remediation when violations occur.",
         ),
     ]
     query_lower = query.lower()
-    results = []
-    for keywords, text in knowledge:
-        if any(kw in query_lower for kw in keywords):
-            results.append(text)
+    results = [text for keywords, text in knowledge if any(kw in query_lower for kw in keywords)]
     return "\n\n".join(results) if results else "No specific compliance matches found."
 
 
+@tool
+def search_privacy_law(query: str) -> str:
+    """Search privacy and data protection law knowledge base.
+
+    Args:
+        query: Natural language query about privacy, GDPR, CCPA, or data protection.
+    """
+    knowledge = [
+        (
+            ["gdpr", "privacy", "data", "consent", "personal", "eu"],
+            "GDPR requires a lawful basis for processing, transparency, data minimisation, "
+            "purpose limitation, appropriate security, and respect for data subject rights. "
+            "Serious violations can lead to fines up to 4% of annual global turnover or EUR 20M.",
+        ),
+        (
+            ["breach", "leak", "du lieu", "dữ liệu", "notification", "customer"],
+            "Data breach duties can include containment, forensic investigation, regulator notice, "
+            "affected-user notice, remediation, and security improvements. GDPR generally requires "
+            "supervisory authority notice within 72 hours when risk to individuals is likely.",
+        ),
+        (
+            ["ccpa", "cpra", "california", "consumer", "sharing", "sale"],
+            "CCPA/CPRA gives consumers rights to notice, access, deletion, correction, opt out of "
+            "sale or sharing, and limit sensitive personal information use. Intentional violations "
+            "can create civil penalties up to $7,500 per violation.",
+        ),
+    ]
+    query_lower = query.lower()
+    results = [text for keywords, text in knowledge if any(kw in query_lower for kw in keywords)]
+    return "\n\n".join(results) if results else "No specific privacy law matches found."
+
+
 # ---------------------------------------------------------------------------
-# State definition (mirrors law_agent/graph.py)
+# State definition
 # ---------------------------------------------------------------------------
-
-from typing import Annotated, TypedDict
-
-from langgraph.constants import Send
-from langgraph.graph import END, StateGraph
-
 
 def _last_wins(a: str, b: str) -> str:
     """Reducer: keep the most recently written value."""
@@ -114,8 +137,10 @@ class LegalState(TypedDict):
     law_analysis: str
     needs_tax: bool
     needs_compliance: bool
+    needs_privacy: bool
     tax_result: Annotated[str, _last_wins]
     compliance_result: Annotated[str, _last_wins]
+    privacy_result: Annotated[str, _last_wins]
     final_answer: str
 
 
@@ -124,15 +149,15 @@ class LegalState(TypedDict):
 # ---------------------------------------------------------------------------
 
 async def analyze_law(state: LegalState) -> dict:
-    """Lead attorney analyses the legal aspects of the question."""
+    """Lead attorney analyses the general legal aspects of the question."""
     print("\n  [Node: analyze_law] Lead attorney analysing legal aspects...")
     llm = get_llm()
     messages = [
         SystemMessage(
             content=(
                 "You are a senior corporate litigation attorney specialising in contract law, "
-                "tort law, and general business law. Analyse the legal aspects of the question "
-                "thoroughly. Keep your analysis under 200 words."
+                "tort law, and general business law. Analyse the legal aspects of the question. "
+                "Keep your analysis under 200 words."
             )
         ),
         HumanMessage(content=state["question"]),
@@ -143,18 +168,20 @@ async def analyze_law(state: LegalState) -> dict:
 
 
 async def check_routing(state: LegalState) -> dict:
-    """Routing node: determine which specialist sub-agents are needed."""
+    """Determine which specialist sub-agents are needed."""
     print("\n  [Node: check_routing] Determining which specialists are needed...")
     llm = get_llm()
     messages = [
         SystemMessage(
             content=(
-                'You are a legal routing expert. Based on the question, decide whether '
-                'specialist sub-agents are needed.\n'
-                'Reply with ONLY valid JSON — no markdown, no extra text:\n'
-                '{"needs_tax": <true|false>, "needs_compliance": <true|false>}\n\n'
-                'needs_tax = true  → question involves tax law, IRS, tax evasion, penalties\n'
-                'needs_compliance = true → question involves regulatory compliance, SEC, SOX, AML, FCPA'
+                "You are a legal routing expert. Based on the question, decide whether "
+                "specialist sub-agents are needed.\n"
+                "Reply with ONLY valid JSON, no markdown, no extra text:\n"
+                '{"needs_tax": <true|false>, "needs_compliance": <true|false>, '
+                '"needs_privacy": <true|false>}\n\n'
+                "needs_tax = true when the question involves tax law, IRS, tax evasion, or penalties.\n"
+                "needs_compliance = true when it involves SEC, SOX, AML, FCPA, or regulation.\n"
+                "needs_privacy = true when it involves data, privacy, GDPR, CCPA, data breach, or consent."
             )
         ),
         HumanMessage(content=state["question"]),
@@ -170,69 +197,98 @@ async def check_routing(state: LegalState) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        parsed = {"needs_tax": True, "needs_compliance": True}
+        parsed = {"needs_tax": True, "needs_compliance": True, "needs_privacy": False}
 
-    needs_tax = bool(parsed.get("needs_tax", True))
-    needs_compliance = bool(parsed.get("needs_compliance", True))
-    print(f"  [Node: check_routing] needs_tax={needs_tax}, needs_compliance={needs_compliance}")
-    return {"needs_tax": needs_tax, "needs_compliance": needs_compliance}
+    question_lower = state["question"].lower()
+    privacy_keywords = ["data", "privacy", "gdpr", "dữ liệu", "du lieu", "breach", "leak", "consent"]
+
+    needs_tax = bool(parsed.get("needs_tax", False))
+    needs_compliance = bool(parsed.get("needs_compliance", False))
+    needs_privacy = bool(parsed.get("needs_privacy", False)) or any(
+        kw in question_lower for kw in privacy_keywords
+    )
+
+    print(
+        "  [Node: check_routing] "
+        f"needs_tax={needs_tax}, needs_compliance={needs_compliance}, needs_privacy={needs_privacy}"
+    )
+    return {
+        "needs_tax": needs_tax,
+        "needs_compliance": needs_compliance,
+        "needs_privacy": needs_privacy,
+    }
 
 
 def route_to_specialists(state: LegalState) -> list[Send]:
-    """Routing function: dispatch parallel Send objects to specialist nodes."""
+    """Dispatch parallel Send objects to specialist nodes."""
     sends: list[Send] = []
     if state.get("needs_tax"):
         sends.append(Send("call_tax_specialist", state))
     if state.get("needs_compliance"):
         sends.append(Send("call_compliance_specialist", state))
+    if state.get("needs_privacy"):
+        sends.append(Send("call_privacy_specialist", state))
     if not sends:
         sends.append(Send("aggregate", state))
     return sends
 
 
 async def call_tax_specialist(state: LegalState) -> dict:
-    """Tax specialist sub-agent (runs as inline ReAct agent)."""
+    """Tax specialist sub-agent."""
     from langgraph.prebuilt import create_react_agent
 
     print("\n  [Node: call_tax_specialist] Tax specialist agent starting...")
-
-    # Reuse the tax system prompt from tax_agent/graph.py
     tax_prompt = (
-        "You are a specialist tax attorney and CPA with expertise in corporate tax law, "
-        "tax evasion vs. avoidance, IRS enforcement, penalties under IRC §§ 6651/6662/6663, "
-        "FBAR/FATCA requirements, and tax fraud statutes (18 U.S.C. § 7201-7207). "
-        "Use the search_tax_law tool to ground your analysis. Keep your response under 200 words."
+        "You are a specialist tax attorney and CPA. Focus on IRS enforcement, tax evasion, "
+        "FBAR/FATCA, penalties, back taxes, interest, and officer liability. Use the "
+        "search_tax_law tool to ground your analysis. Keep your response under 200 words."
     )
 
     llm = get_llm()
     agent = create_react_agent(model=llm, tools=[search_tax_law], prompt=tax_prompt)
     result = await agent.ainvoke({"messages": [{"role": "user", "content": state["question"]}]})
-
     final_msg = result["messages"][-1].content
     print(f"  [Node: call_tax_specialist] Done ({len(final_msg)} chars)")
     return {"tax_result": final_msg}
 
 
 async def call_compliance_specialist(state: LegalState) -> dict:
-    """Compliance specialist sub-agent (runs as inline ReAct agent)."""
+    """Compliance specialist sub-agent."""
     from langgraph.prebuilt import create_react_agent
 
     print("\n  [Node: call_compliance_specialist] Compliance specialist agent starting...")
-
-    # Reuse the compliance system prompt from compliance_agent/graph.py
     compliance_prompt = (
-        "You are a senior regulatory compliance officer with expertise in SEC enforcement, "
-        "SOX compliance, FTC regulations, FCPA, AML/BSA, GDPR, CCPA, and corporate governance. "
-        "Use the search_compliance_law tool to ground your analysis. Keep your response under 200 words."
+        "You are a senior regulatory compliance officer. Focus on SEC, SOX, FCPA, AML/BSA, "
+        "governance, controls, disclosure, and remediation obligations. Use the "
+        "search_compliance_law tool to ground your analysis. Keep your response under 200 words."
     )
 
     llm = get_llm()
     agent = create_react_agent(model=llm, tools=[search_compliance_law], prompt=compliance_prompt)
     result = await agent.ainvoke({"messages": [{"role": "user", "content": state["question"]}]})
-
     final_msg = result["messages"][-1].content
     print(f"  [Node: call_compliance_specialist] Done ({len(final_msg)} chars)")
     return {"compliance_result": final_msg}
+
+
+async def call_privacy_specialist(state: LegalState) -> dict:
+    """Privacy specialist sub-agent focused on GDPR, CCPA, and data protection."""
+    from langgraph.prebuilt import create_react_agent
+
+    print("\n  [Node: call_privacy_specialist] Privacy specialist agent starting...")
+    privacy_prompt = (
+        "You are a specialist privacy and data protection attorney with expertise in GDPR, "
+        "CCPA/CPRA, data breach response, consent, lawful basis, data subject rights, and "
+        "privacy regulator enforcement. Use the search_privacy_law tool to ground your "
+        "analysis. Keep your response under 200 words."
+    )
+
+    llm = get_llm()
+    agent = create_react_agent(model=llm, tools=[search_privacy_law], prompt=privacy_prompt)
+    result = await agent.ainvoke({"messages": [{"role": "user", "content": state["question"]}]})
+    final_msg = result["messages"][-1].content
+    print(f"  [Node: call_privacy_specialist] Done ({len(final_msg)} chars)")
+    return {"privacy_result": final_msg}
 
 
 async def aggregate(state: LegalState) -> dict:
@@ -247,9 +303,10 @@ async def aggregate(state: LegalState) -> dict:
         sections.append(f"## Tax Analysis\n{state['tax_result']}")
     if state.get("compliance_result"):
         sections.append(f"## Regulatory Compliance Analysis\n{state['compliance_result']}")
+    if state.get("privacy_result"):
+        sections.append(f"## Privacy and Data Protection Analysis\n{state['privacy_result']}")
 
     combined = "\n\n---\n\n".join(sections)
-
     messages = [
         SystemMessage(
             content=(
@@ -267,7 +324,7 @@ async def aggregate(state: LegalState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Graph construction (mirrors law_agent/graph.py topology)
+# Graph construction
 # ---------------------------------------------------------------------------
 
 def create_graph():
@@ -278,6 +335,7 @@ def create_graph():
     graph.add_node("check_routing", check_routing)
     graph.add_node("call_tax_specialist", call_tax_specialist)
     graph.add_node("call_compliance_specialist", call_compliance_specialist)
+    graph.add_node("call_privacy_specialist", call_privacy_specialist)
     graph.add_node("aggregate", aggregate)
 
     graph.set_entry_point("analyze_law")
@@ -285,16 +343,25 @@ def create_graph():
     graph.add_conditional_edges(
         "check_routing",
         route_to_specialists,
-        ["call_tax_specialist", "call_compliance_specialist", "aggregate"],
+        [
+            "call_tax_specialist",
+            "call_compliance_specialist",
+            "call_privacy_specialist",
+            "aggregate",
+        ],
     )
     graph.add_edge("call_tax_specialist", "aggregate")
     graph.add_edge("call_compliance_specialist", "aggregate")
+    graph.add_edge("call_privacy_specialist", "aggregate")
     graph.add_edge("aggregate", END)
 
     return graph.compile()
 
 
-QUESTION = "If a company breaks a contract and avoids taxes, what are the legal and regulatory consequences?"
+QUESTION = (
+    "If a company breaks a contract, avoids taxes, and leaks customer data, "
+    "what are the legal, tax, compliance, and privacy consequences?"
+)
 
 
 async def main():
@@ -305,24 +372,25 @@ async def main():
     print("[How it works]")
     print("  1. Lead attorney agent analyses the question")
     print("  2. Router decides which specialist agents are needed")
-    print("  3. Tax + Compliance specialists run IN PARALLEL (LangGraph Send API)")
+    print("  3. Tax + Compliance + Privacy specialists run in parallel")
     print("  4. Aggregator combines all analyses into a final answer")
     print()
     print("[Graph topology]")
-    print("  analyze_law -> check_routing -> [call_tax + call_compliance] -> aggregate -> END")
+    print("  analyze_law -> check_routing -> [tax + compliance + privacy] -> aggregate -> END")
     print()
     print(f"Question: {QUESTION}")
     print("-" * 70)
 
     graph = create_graph()
-
     result = await graph.ainvoke({
         "question": QUESTION,
         "law_analysis": "",
         "needs_tax": False,
         "needs_compliance": False,
+        "needs_privacy": False,
         "tax_result": "",
         "compliance_result": "",
+        "privacy_result": "",
         "final_answer": "",
     })
 
@@ -335,7 +403,7 @@ async def main():
     print("-" * 70)
     print("[Improvements over Stage 3]")
     print("  + Specialisation: each agent has domain-specific expertise")
-    print("  + Parallel execution: tax + compliance agents run concurrently")
+    print("  + Parallel execution: tax + compliance + privacy agents run concurrently")
     print("  + Better quality: specialist prompts produce deeper analysis")
     print("  + Structured flow: explicit graph topology with routing logic")
     print()
@@ -352,9 +420,7 @@ async def main():
     print("  | Good for small teams      | Good for large organisations  |")
     print("  +---------------------------+-------------------------------+")
     print()
-    print("Stage 5 (this repo's main project) takes this same graph topology")
-    print("and deploys each agent as an independent A2A service. Run it with:")
-    print("  ./start_all.sh && python test_client.py")
+    print("Stage 5 takes this same graph topology and deploys each agent as an independent A2A service.")
     print("=" * 70)
 
 
